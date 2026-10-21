@@ -1,1 +1,85 @@
+name: Hindi AI Video
+
+on:
+  # 1) फ़ोन से हाथ से चलाने के लिए (Actions टैब -> Run workflow)
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "वीडियो का टॉपिक (खाली छोड़ेंगे तो topics.txt की पहली लाइन)"
+        required: false
+        default: ""
+      privacy:
+        description: "private / unlisted / public"
+        required: true
+        default: "private"
+        type: choice
+        options: [private, unlisted, public]
+      dry_run:
+        description: "सिर्फ़ वीडियो बनाओ, YouTube पर अपलोड मत करो"
+        required: true
+        default: false
+        type: boolean
+
+  # 2) रोज़ अपने आप। समय UTC में है: 12:30 UTC = शाम 6:00 बजे IST
+  schedule:
+    - cron: "30 12 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hindi-ai-video
+  cancel-in-progress: false
+
+jobs:
+  make-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python packages
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          TOPIC: ${{ github.event.inputs.topic }}
+          # हाथ से चलाने पर चुना हुआ privacy; रोज़ वाले ऑटो रन में repo variable UPLOAD_PRIVACY (न हो तो private)
+          UPLOAD_PRIVACY: ${{ github.event.inputs.privacy || vars.UPLOAD_PRIVACY || 'private' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          VOICE: ${{ vars.VOICE || 'hi-IN-MadhurNeural' }}
+          VIDEO_MINUTES: ${{ vars.VIDEO_MINUTES || '4' }}
+        run: python main.py
+
+      - name: Save video file (check करने के लिए)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-output
+          path: |
+            output/video.mp4
+            output/script.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Update topics list
+        if: success()
+        run: |
+          git config user.name "video-bot"
+          git config user.email "video-bot@users.noreply.github.com"
+          git add topics.txt used_topics.txt 2>/dev/null || true
+          git diff --cached --quiet || (git commit -m "Update topics" && git push)
 
